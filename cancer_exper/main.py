@@ -130,14 +130,6 @@ def gaussian_kernel_weights(positions, center_idx, sigma=1.0, positions1=None, p
 
 
 def main(use_ours, args, use_dp=True):
-    # 设置随机种子以确保可重复性
-    # torch.manual_seed(21)
-    # np.random.seed(21)
-    # torch.manual_seed(41)
-    # np.random.seed(41)
-    # torch.manual_seed(13)
-    # np.random.seed(13)
-
 
     # 加载数据
     cancers = load_breast_cancer()
@@ -363,7 +355,7 @@ if __name__ == '__main__':
         plt.plot(steps, other_runs[i], label='Other', linewidth=2, color='blue', linestyle='--', marker='x')
         plt.plot(steps, original_runs[i], label='Original', linewidth=2, linestyle='--', marker='*')  # p
         # 图形美化
-        plt.title(f"cosine_threshold={args.cosine_threshold}, sigma={args.sigma}", fontsize=14)
+        plt.title(f"method={args.method} cosine_threshold={args.cosine_threshold}, sigma={args.sigma}", fontsize=14)
         plt.xlabel("Training Steps", fontsize=12)
         plt.ylabel("Accuracy", fontsize=12)
         # plt.grid(True, linestyle="--", alpha=0.6)
