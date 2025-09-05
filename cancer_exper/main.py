@@ -1,20 +1,19 @@
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
-import numpy as np
+import tqdm
+from opacus import PrivacyEngine
 from sklearn.datasets import load_breast_cancer
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader, TensorDataset
 
 from algs.moments_accountant import compute_z
+from main_utils import federated_average, compute_gradients, selective_federated_average, client_noise_sort_batch, \
+    create_client_data
 from utils.privacy_params import get_epsilons_batchsizes
-
-from opacus import PrivacyEngine
-import tqdm
-from main_utils import federated_average, compute_gradients, selective_federated_average, client_noise_sort_batch, create_client_data
-
 
 
 # 定义全局模型
@@ -29,49 +28,49 @@ class GlobalModel(nn.Module):
 
 # 定义训练函数（带差分隐私）
 def train_local_model_with_dp(model, data, epochs, lr, batch_size, max_grad_norm, nsc):
-        # 保存初始参数用于梯度计算
-        initial_params = {k: v.clone() for k, v in model.state_dict().items()}
+    # 保存初始参数用于梯度计算
+    initial_params = {k: v.clone() for k, v in model.state_dict().items()}
 
-        model.train()
-        optimizer = optim.SGD(model.parameters(), lr=lr)
-        criterion = nn.CrossEntropyLoss()
+    model.train()
+    optimizer = optim.SGD(model.parameters(), lr=lr)
+    criterion = nn.CrossEntropyLoss()
 
-        dataset = TensorDataset(data[0], data[1])
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataset = TensorDataset(data[0], data[1])
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-        # 创建PrivacyEngine并包装优化器
-        privacy_engine = PrivacyEngine()
+    # 创建PrivacyEngine并包装优化器
+    privacy_engine = PrivacyEngine()
 
-        model, optimizer, dataloader = privacy_engine.make_private(
-            module=model,
-            optimizer=optimizer,
-            data_loader=dataloader,
-            noise_multiplier=nsc,
-            max_grad_norm=max_grad_norm,
-        )
+    model, optimizer, dataloader = privacy_engine.make_private(
+        module=model,
+        optimizer=optimizer,
+        data_loader=dataloader,
+        noise_multiplier=nsc,
+        max_grad_norm=max_grad_norm,
+    )
 
-        for epoch in range(epochs):
-            for x_batch, y_batch in dataloader:
-                optimizer.zero_grad()
-                outputs = model(x_batch)
-                loss = criterion(outputs, y_batch)
-                loss.backward()
-                optimizer.step()
+    for epoch in range(epochs):
+        for x_batch, y_batch in dataloader:
+            optimizer.zero_grad()
+            outputs = model(x_batch)
+            loss = criterion(outputs, y_batch)
+            loss.backward()
+            optimizer.step()
 
-        # 获取隐私消耗
-        # epsilon = privacy_engine.get_epsilon(delta=target_delta)
-        # print(f"本地训练隐私消耗: (ε = {epsilon:.2f}, δ = {target_delta})")
+    # 获取隐私消耗
+    # epsilon = privacy_engine.get_epsilon(delta=target_delta)
+    # print(f"本地训练隐私消耗: (ε = {epsilon:.2f}, δ = {target_delta})")
 
-        # 提取原始模型参数（去掉Opacus的包装）
-        final_params = {}
-        for name, param in model.named_parameters():
-            if '_module.' in name:
-                # 去掉Opacus添加的前缀
-                original_name = name.replace('_module.', '')
-                final_params[original_name] = param.data.clone()
-        # 计算梯度（参数变化）
-        gradients = compute_gradients(initial_params, final_params)
-        return final_params, gradients
+    # 提取原始模型参数（去掉Opacus的包装）
+    final_params = {}
+    for name, param in model.named_parameters():
+        if '_module.' in name:
+            # 去掉Opacus添加的前缀
+            original_name = name.replace('_module.', '')
+            final_params[original_name] = param.data.clone()
+    # 计算梯度（参数变化）
+    gradients = compute_gradients(initial_params, final_params)
+    return final_params, gradients
 
 
 # 定义训练函数
@@ -96,8 +95,8 @@ def train_local_model(model, data, epochs, lr, batch_size):
     gradients = compute_gradients(initial_params, model.state_dict())
     return model.state_dict(), gradients
 
-def gaussian_kernel_weights(positions, center_idx, sigma=1.0, positions1=None, positions1_w=0.5):
 
+def gaussian_kernel_weights(positions, center_idx, sigma=1.0, positions1=None, positions1_w=0.5):
     distances_sq = np.sum((positions - positions[center_idx]) ** 2, axis=1)
     if positions1 is not None:
         ## positions1 噪声程度
@@ -121,12 +120,8 @@ def gaussian_kernel_weights(positions, center_idx, sigma=1.0, positions1=None, p
 
 def main(use_ours, use_dp=True):
     # 设置随机种子以确保可重复性
-    # torch.manual_seed(21)
-    # np.random.seed(21)
-    torch.manual_seed(41)
-    np.random.seed(41)
-    torch.manual_seed(13)
-    np.random.seed(13)
+    # torch.manual_seed(13)
+    # np.random.seed(13)
 
     # 加载数据
     cancers = load_breast_cancer()
@@ -202,13 +197,13 @@ def main(use_ours, use_dp=True):
                     batches[client_id]
                 )
 
-
             client_updates.append(local_state_dict)
             client_gradients_updates.append(gradients)
         if use_ours:
             similarity_matrix, client_aggregated_params = selective_federated_average(global_model, client_updates,
                                                                                       client_gradients_updates,
-                                                                                      cosine_threshold, client_sort_result, sigma)
+                                                                                      cosine_threshold,
+                                                                                      client_sort_result, sigma)
             averaged_state_dict = federated_average(global_model, client_aggregated_params)
 
         else:
@@ -236,6 +231,7 @@ def main(use_ours, use_dp=True):
     #     print(f"\n最终全局模型测试准确率: {final_accuracy:.4f}")
     return test_accs
 
+
 # 超参数
 input_dim = 30
 output_dim = 2
@@ -251,8 +247,14 @@ target_delta = 1e-5
 # max_grad_norm = 1.0
 max_grad_norm = 2.0
 cosine_threshold = 0.1
-sigma=0.4
-if __name__ == '__main__':
+sigma = 0.4
+
+
+def single_run(seed):
+    # 设置随机种子以确保可重复性
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     ours_accs = main(True)
     o_c = [a.item() for a in ours_accs]
     accs = main(False)
@@ -264,22 +266,91 @@ if __name__ == '__main__':
     print(o_c)
     print(c)
     print(s_c)
-    print(f'dis:{[float(o_c[i])-float(c[i]) for i in range(len(o_c))]}')
+    print(f'dis:{[float(o_c[i]) - float(c[i]) for i in range(len(o_c))]}')
     # accs = [0.38596490025520325, 0.38596490025520325, 0.42105263471603394, 0.5263158082962036, 0.6140350699424744, 0.5614035129547119, 0.5526315569877625, 0.6140350699424744, 0.640350878238678, 0.6491228342056274, 0.6578947305679321, 0.7017543911933899, 0.7105262875556946, 0.7368420958518982, 0.7543859481811523, 0.780701756477356, 0.7894737124443054, 0.8070175647735596, 0.8157894611358643, 0.8157894611358643, 0.8157894611358643, 0.8245614171028137, 0.8333333134651184, 0.8421052694320679, 0.8421052694320679, 0.8508771657943726, 0.8508771657943726, 0.859649121761322, 0.859649121761322, 0.859649121761322, 0.859649121761322, 0.859649121761322, 0.859649121761322, 0.8684210777282715, 0.8684210777282715, 0.8771929740905762, 0.8684210777282715, 0.8684210777282715, 0.8771929740905762, 0.8771929740905762, 0.8947368264198303, 0.8947368264198303, 0.8947368264198303, 0.8947368264198303, 0.8859649300575256, 0.8947368264198303, 0.8947368264198303, 0.9035087823867798, 0.9298245906829834, 0.9385964870452881]
-    steps = [step for step in range(1, len(ours_accs)+1)]
+    steps = [step for step in range(1, len(ours_accs) + 1)]
 
     # print(accs)
     # 画折线图
     plt.figure(figsize=(8, 6))
     plt.plot(steps, ours_accs, label='Ours', linewidth=2, color='red', linestyle='--', marker='o')
     plt.plot(steps, accs, label='Other', linewidth=2, color='blue', linestyle='--', marker='x')
-    plt.plot(steps, start_accs, label='Original', linewidth=2, linestyle='--', marker='*') # p
+    plt.plot(steps, start_accs, label='Original', linewidth=2, linestyle='--', marker='*')  # p
 
     # 图形美化
     plt.title(f"cosine_threshold={cosine_threshold}, sigma={sigma}", fontsize=14)
     plt.xlabel("Training Steps", fontsize=12)
     plt.ylabel("Accuracy", fontsize=12)
     # plt.grid(True, linestyle="--", alpha=0.6)
+    plt.legend(fontsize=12)
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == '__main__':
+    # single_run(seed=13)
+    seeds = [21, 41, 13, 0, 63]
+
+
+    def run_experiments(use_ours, use_dp=True):
+        all_runs = []
+        for seed in seeds:
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            accs = main(use_ours, use_dp=use_dp)
+            accs = [a.item() for a in accs]
+            all_runs.append(accs)
+        return np.array(all_runs)  # shape = (len(seeds), global_epochs)
+
+
+    # 三种方法
+    ours_runs = run_experiments(True, use_dp=True)
+    other_runs = run_experiments(False, use_dp=True)
+    original_runs = run_experiments(False, use_dp=False)
+
+    steps = np.arange(1, global_epochs + 1)
+
+    # 每次实验单独的折线图
+    for i in range(len(seeds)):
+        plt.figure(figsize=(8, 6))
+        plt.plot(steps, ours_runs[i], label='Ours', linewidth=2, color='red', linestyle='--', marker='o')
+        plt.plot(steps, other_runs[i], label='Other', linewidth=2, color='blue', linestyle='--', marker='x')
+        plt.plot(steps, original_runs[i], label='Original', linewidth=2, linestyle='--', marker='*')  # p
+        # 图形美化
+        plt.title(f"cosine_threshold={cosine_threshold}, sigma={sigma}", fontsize=14)
+        plt.xlabel("Training Steps", fontsize=12)
+        plt.ylabel("Accuracy", fontsize=12)
+        # plt.grid(True, linestyle="--", alpha=0.6)
+        plt.legend(fontsize=12)
+        plt.tight_layout()
+        plt.show()
+
+    # 几次平均的折线图
+    # 计算均值 & 标准差
+    ours_mean, ours_std = ours_runs.mean(axis=0), ours_runs.std(axis=0)
+    other_mean, other_std = other_runs.mean(axis=0), other_runs.std(axis=0)
+    original_mean, original_std = original_runs.mean(axis=0), original_runs.std(axis=0)
+    plt.figure(figsize=(8, 6))
+
+
+    def plot_curve(x, mean, std, label, color, line_width=2, line_style='--'):
+        plt.plot(x, mean, label=label, color=color, linewidth=line_width, linestyle=line_style)
+        # plt.fill_between(x, mean - std, mean + std, color=color, alpha=0.2)
+        # plt.fill_between(x, mean - 0.5 * std, mean + 0.5 * std, color=color, alpha=0.2)
+        # ci95 = 1.96 * std / np.sqrt(len(seeds))
+        # plt.fill_between(x, mean - ci95, mean + ci95, color=color, alpha=0.2)
+        sem = std / np.sqrt(len(seeds))
+        plt.fill_between(x, mean - sem, mean + sem, color=color, alpha=0.2)
+
+
+    plot_curve(steps, ours_mean, ours_std, 'Ours', 'red', line_style='-')
+    plot_curve(steps, other_mean, other_std, 'Other', 'blue', line_style='-')
+    plot_curve(steps, original_mean, original_std, 'Original', 'green', line_style='-')
+
+    plt.title(f"cosine_threshold={cosine_threshold}, sigma={sigma}", fontsize=14)
+    plt.xlabel("Training Steps", fontsize=12)
+    plt.ylabel("Average Accuracy", fontsize=12)
+    plt.grid(True, linestyle="--", alpha=0.6)
     plt.legend(fontsize=12)
     plt.tight_layout()
     plt.show()
