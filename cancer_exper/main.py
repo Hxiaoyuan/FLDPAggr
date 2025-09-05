@@ -146,7 +146,6 @@ def main(use_ours, use_dp=True):
     x_test_tensor = torch.tensor(x_test, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test, dtype=torch.long)
 
-
     # 初始化全局模型
     global_model = GlobalModel(input_dim, output_dim)
     epsilons_input, batches = get_epsilons_batchsizes(num_clients, 'Dist1')
