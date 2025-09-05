@@ -1,2 +1,7 @@
+*.zip
+cancer_exper/figures
 
 .idea
+.vscode
+.env
+.DS_Store
