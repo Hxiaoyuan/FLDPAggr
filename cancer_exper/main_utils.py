@@ -1,12 +1,14 @@
 import torch
-
 import numpy as np
 
+
+from copy import deepcopy
+
 # 联邦平均函数（处理参数名称变化）
 
 
 # 联邦平均函数（处理参数名称变化）
-def federated_average(global_model, client_updates):
+def federated_average(global_model, client_updates, client_weights):
     averaged_state_dict = {}
 
     # 获取全局模型的参数名称
@@ -15,16 +17,16 @@ def federated_average(global_model, client_updates):
     for key in global_keys:
         # 收集所有客户端对应参数的值
         param_list = []
-        for update in client_updates:
+        for c_id, update in enumerate(client_updates):
             if key in update:
-                param_list.append(update[key])
+                param_list.append(update[key]*client_weights[c_id])
             else:
                 # 如果客户端没有这个参数（由于Opacus包装），使用全局模型的当前值
-                param_list.append(global_model.state_dict()[key].clone())
+                param_list.append(global_model.state_dict()[key].clone()*client_weights[c_id])
 
         # 计算平均值
         if param_list:
-            averaged_state_dict[key] = torch.stack(param_list).mean(dim=0)
+            averaged_state_dict[key] = torch.stack(param_list).sum(dim=0)
 
     return averaged_state_dict
 

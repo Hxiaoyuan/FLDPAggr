@@ -1,4 +1,5 @@
 # FLDPAggr
+
 ```
-python run 
+python main.py --method FedAvg
 ```
